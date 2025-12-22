@@ -1,23 +1,25 @@
-# Fabric AI Config
-A collection of resources I use with [danielmiessler/Fabric](fabric-ai-repo).
-
-## Installation
-
-See the main Fabric repository for [installation instructions](https://github.com/danielmiessler/Fabric?tab=readme-ov-file#from-source).
-
-Fabric installs its library of patterns to `~/.config/fabric/patterns/` by default. 
-
-> [!NOTE]
-> After updating the CLI, use `fabric --setup` to use a tool that will update the patterns directory.
-
-> [!NOTE]
-> Custom patterns no longer need to be copied into the main patterns directory.  There is a tool in
-> the `fabric --setup` menu that can be used to point Fabric to a custom patterns directory.
-
-> [!NOTE]
-> Save the `~/.config/fabric/.env` file before deleting/re-installing the `~/.config/fabric/`
-> directory to preserve your API keys and other settings.
+# Promptfiles
+Attempting to collate and organize various prompt files for use with LLM frameworks / platforms.
+Ultimately, I want the reusable portions of content to go under `promptfiles/content/` and as needed
+I can translate them into formats suitable for different frameworks / platforms.
 
 
+## Fabric CLI
+- [Fabric CLI Prompts](fabric-cli/README.md): A collection of prompt files designed for use with the
+  Fabric CLI tool.
 
-[fabric-ai-repo]: https://github.com/danielmiessler/Fabric
+
+## GitHub
+- [GitHub Prompts](github/README.md): A set of prompt files specifically created for GitHub-related
+  tasks and workflows.
+
+
+## SpecKit
+- [SpecKit Prompts](speckit/README.md): A set of prompt files tailored for the SpecKit framework.
+
+
+## Cursor
+- [Cursor Prompts](cursor/README.md): A variety of prompt files optimized for use with the Cursor
+  platform.
+
+
