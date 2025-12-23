@@ -1,0 +1,491 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index b8275b1..e7cf4d9 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "conversationservice"
+-version = "0.0.47"
++version = "0.0.48"
+ description = "Conversation service for teams and digital human."
+ readme = "README.md"
+ requires-python = ">=3.11"
+diff --git a/src/conversationservice/conversation_flow.py b/src/conversationservice/conversation_flow.py
+index 11d546d..d6446fe 100644
+--- a/src/conversationservice/conversation_flow.py
++++ b/src/conversationservice/conversation_flow.py
+@@ -32,7 +32,7 @@ class ConversationState(BaseModel):
+     current_step: str | None
+     current_prompt: str
+     # llm_prompt: str  # This needs an alias to map LLM_prompt to llm_prompt
+-    event: str | None
++    event: str | None = None
+     inputs: list[InputItem]
+ 
+ 
+@@ -290,26 +290,13 @@ class HTMLFormManager(BaseFlow):
+         message["content"] = content
+ 
+     def _generate_form_groups(self, conversation_context: ConversationContext) -> None:
+-        """Generate form groups based on conversation state or function call."""
++        """Generate form groups based on conversation state inputs field."""
+         conversation_state = (
+             conversation_context.get("conversation_state", [])[-1].get("model")
+             if conversation_context.get("conversation_state")
+             else None
+         )
+-        if conversation_state:
+-            if not conversation_state.inputs:
+-                # No inputs collected yet, show default form group
+-                # TODO: Build the initial form group based on the CFD.  Some flows don't start like this.
+-                html = self.form_group(
+-                    label="Name",
+-                    label_for="name",
+-                    input_type="text",
+-                    input_id="name",
+-                    input_value="Please provide your name.",
+-                )
+-                conversation_context["form_groups"] = [html]
+-                return
+-
++        if conversation_state and conversation_state.inputs:
+             form_groups = []
+             for item in conversation_state.inputs:
+                 label = " ".join([element.capitalize() for element in item.key.split("_")])
+@@ -325,7 +312,7 @@ class HTMLFormManager(BaseFlow):
+ 
+     def handle_response(
+         self,
+-        response: LLMServiceResponse,
++        _: LLMServiceResponse,
+         response_body: ResponseBody,
+         conversation_context: ConversationContext,
+     ) -> bool:
+diff --git a/tests/__init__.py b/tests/__init__.py
+index 3bb8b99..d7cf4fc 100644
+--- a/tests/__init__.py
++++ b/tests/__init__.py
+@@ -6,6 +6,7 @@ import uuid
+ #  - Forces tests to explicitly provide configuration for the features under test.
+ #  - Prevents tests from accidentally using a developer's local environment configuration.
+ os.environ["ENVFILE"] = f"{uuid.uuid4().hex}.env"
++os.environ["LOG_LEVEL"] = "CRITICAL"
+ 
+ 
+ # F401: Unused import
+diff --git a/tests/conversation_service/test_conversation_flow.py b/tests/conversation_service/test_conversation_flow.py
+new file mode 100644
+index 0000000..8b0c4be
+--- /dev/null
++++ b/tests/conversation_service/test_conversation_flow.py
+@@ -0,0 +1,330 @@
++import json
++
++from conversationservice.conversation_flow import ConversationState, HTMLFormManager
++from conversationservice.conversations.flow import LLMServiceResponse
++
++import unittest
++from unittest.mock import Mock
++
++from tests.utils import verify_test_data_conforms_to_schema
++
++
++class HTMLFormManagerTestCase(unittest.TestCase):
++    def test_it_handles_malformed_conversation_state_json(self) -> None:
++        response = Mock(spec=LLMServiceResponse)
++        response_body = {
++            "id": "chatcmpl-C0zYCmFlknXWSa3G8D6V2o7WzZZUJ",
++            "object": "chat.completion",
++            "created": 1754352636,
++            "model": "gpt-4.1-2025-04-14",
++            "choices": [
++                {
++                    "index": 0,
++                    "message": {
++                        "role": "assistant",
++                        # Malformed JSON: missing closing brace and quote
++                        "content": '<uneeq:end-session /> Thank you, Theodore. Who will you be interviewing with today? Please provide your interviewer\'s full name.\n\nCONVERSATION_STATE\n```json\n{\n  "flow_name": "interviewee_checkin_flow",\n  "current_state": "In Progress",\n  "current_step": "ask_host",\n  "current_prompt": "What\'s the full name of the person you\'re interviewing with today?",\n  "LLM_prompt": "Thank you, Theodore. Who will you be interviewing with today? Please provide your interviewer\'s full name.",\n  "event": null,\n  "confidence": "High",\n  "inputs": [\n    { "step": "ask_name", "key": "visitor_name", "value": "Theodore Kaczynski" }\n  ]\n',
++                        "function_call": None,
++                    },
++                    "finish_reason": "stop",
++                }
++            ],
++            "usage": {"prompt_tokens": 6463, "completion_tokens": 158, "total_tokens": 6621},
++        }
++        conversation_context = {
++            "conversation_state": [],
++            "conversation_history": [
++                {"role": "user", "content": "Mock prompt.  It's too long to really include here."},
++                {
++                    "role": "assistant",
++                    "content": "Hi there! Welcome to SHI's Austin headquarters. How can I help you today?\n\n\n",
++                },
++                {"role": "user", "content": "I'm here for an interview"},
++                {
++                    "role": "assistant",
++                    "content": '<uneeq:checkin-form payload="CjxkaXYgY2xhc3M9ImZvcm0tZ3JvdXAiPgogICAgPGxhYmVsIGZvcj0ibmFtZSI+TmFtZTwvbGFi\nZWw+CiAgICA8aW5wdXQgdHlwZT0idGV4dCIgaWQ9Im5hbWUiIGNsYXNzPSJmb3JtLWNvbnRyb2wi\nIHZhbHVlPSJQbGVhc2UgcHJvdmlkZSB5b3VyIG5hbWUuIiAvPgo8L2Rpdj4K\n" /> Great, thanks for letting me know you\'re here for an interview! Could you please tell me your full name so I can get you checked in?\n\n\n',
++                },
++                {"role": "user", "content": "My name is Theodore Kaczynski"},
++            ],
++        }
++        manager = HTMLFormManager()
++
++        result = manager.handle_response(response, response_body, conversation_context)
++
++        self.assertTrue(result)
++        self.assertIn("conversation_state", conversation_context)
++        self.assertListEqual(conversation_context["conversation_state"], [])
++        self.assertNotIn("form_groups", conversation_context)
++
++    def test_it_adds_form_groups_when_conversation_state_has_inputs(self) -> None:
++        response = Mock(spec=LLMServiceResponse)
++        response_body = {
++            "id": "chatcmpl-C0zYCmFlknXWSa3G8D6V2o7WzZZUJ",
++            "object": "chat.completion",
++            "created": 1754352636,
++            "model": "gpt-4.1-2025-04-14",
++            "choices": [
++                {
++                    "index": 0,
++                    "message": {
++                        "role": "assistant",
++                        "content": '<uneeq:end-session /> Thank you, Theodore. Who will you be interviewing with today? Please provide your interviewer\'s full name.\n\nCONVERSATION_STATE\n```json\n{\n  "flow_name": "interviewee_checkin_flow",\n  "current_state": "In Progress",\n  "current_step": "ask_host",\n  "current_prompt": "What\'s the full name of the person you\'re interviewing with today?",\n  "LLM_prompt": "Thank you, Theodore. Who will you be interviewing with today? Please provide your interviewer\'s full name.",\n  "event": null,\n  "confidence": "High",\n  "inputs": [\n    { "step": "ask_name", "key": "visitor_name", "value": "Theodore Kaczynski" }\n  ]\n}\n```',
++                        "function_call": None,
++                    },
++                    "finish_reason": "stop",
++                }
++            ],
++            "usage": {"prompt_tokens": 6463, "completion_tokens": 158, "total_tokens": 6621},
++        }
++        conversation_context = {
++            "conversation_state": [],
++            "conversation_history": [
++                {"role": "user", "content": "Mock prompt.  It's too long to really include here."},
++                {
++                    "role": "assistant",
++                    "content": "Hi there! Welcome to SHI's Austin headquarters. How can I help you today?\n\n\n",
++                },
++                {"role": "user", "content": "I'm here for an interview"},
++                {
++                    "role": "assistant",
++                    "content": '<uneeq:checkin-form payload="CjxkaXYgY2xhc3M9ImZvcm0tZ3JvdXAiPgogICAgPGxhYmVsIGZvcj0ibmFtZSI+TmFtZTwvbGFi\nZWw+CiAgICA8aW5wdXQgdHlwZT0idGV4dCIgaWQ9Im5hbWUiIGNsYXNzPSJmb3JtLWNvbnRyb2wi\nIHZhbHVlPSJQbGVhc2UgcHJvdmlkZSB5b3VyIG5hbWUuIiAvPgo8L2Rpdj4K\n" /> Great, thanks for letting me know you\'re here for an interview! Could you please tell me your full name so I can get you checked in?\n\n\n',
++                },
++                {"role": "user", "content": "My name is Theodore Kaczynski"},
++            ],
++        }
++        manager = HTMLFormManager()
++
++        result = manager.handle_response(response, response_body, conversation_context)
++
++        self.assertTrue(result)
++        self.assertIn("form_groups", conversation_context)
++        self.assertGreaterEqual(len(conversation_context["form_groups"]), 1)
++        self.assertIn("Theodore Kaczynski", conversation_context["form_groups"][0])
++
++    def test_it_gracefully_handles_missing_conversation_state(self) -> None:
++        response = Mock(spec=LLMServiceResponse)
++        conversation_context = {}
++        response_body = {
++            "id": "chatcmpl-C0zY5T6VmeT0eWyrdlUM9833KZwUb",
++            "object": "chat.completion",
++            "created": 1754352630,
++            "model": "gpt-4.1-2025-04-14",
++            "choices": [
++                {
++                    "index": 0,
++                    "message": {
++                        "role": "assistant",
++                        "content": "Hi there! Welcome to SHI's Austin headquarters. How can I help you today?",
++                        "function_call": None,
++                    },
++                    "finish_reason": "stop",
++                }
++            ],
++            "usage": {"prompt_tokens": 4950, "completion_tokens": 120, "total_tokens": 5070},
++        }
++        manager = HTMLFormManager()
++
++        result = manager.handle_response(response, response_body, conversation_context)
++
++        self.assertTrue(result)
++        self.assertIn("conversation_state", conversation_context)
++        self.assertListEqual(conversation_context["conversation_state"], [])
++
++    def test_it_adds_state_to_conversation_context(self) -> None:
++        response = Mock(spec=LLMServiceResponse)
++        conversation_context = {}
++        response_body = {
++            "id": "chatcmpl-C0zY5T6VmeT0eWyrdlUM9833KZwUa",
++            "object": "chat.completion",
++            "created": 1754352629,
++            "model": "gpt-4.1-2025-04-14",
++            "choices": [
++                {
++                    "index": 0,
++                    "message": {
++                        "role": "assistant",
++                        "content": 'Hi there! Welcome to SHI\'s Austin headquarters. How can I help you today?\n\nCONVERSATION_STATE\n```json\n{\n  "flow_name": "General Query",\n  "current_state": "Not Started",\n  "current_step": "General Query",\n  "current_prompt": "Hi there! Welcome to SHI\'s Austin headquarters. How can I help you today?",\n  "LLM_prompt": "Hi there! Welcome to SHI\'s Austin headquarters. How can I help you today?",\n  "confidence": "High",\n  "inputs": []\n}\n```',
++                        "function_call": None,
++                    },
++                    "finish_reason": "stop",
++                }
++            ],
++            "usage": {"prompt_tokens": 4949, "completion_tokens": 119, "total_tokens": 5068},
++        }
++        manager = HTMLFormManager()
++
++        result = manager.handle_response(response, response_body, conversation_context)
++
++        self.assertTrue(result)
++        self.assertIn("conversation_state", conversation_context)
++        self.assertGreaterEqual(len(conversation_context["conversation_state"]), 1)
++
++    def _evaluate_conversation_state_marker_variation(self, variation: str, template: str = "{}") -> None:
++        """Evaluates a single variation of the conversation state marker in the response content.
++
++        When the LLM generates a CONVERSATION_STATE object embedded in its response, that object must be preceeded by some sort
++        of marker or header to distinguish the start of the CONVERSATION_STATE object, an opening `{`, from other content in the
++        response.
++
++        The marker used is dervived from our instructions in the prompt, but it is not deterministic.  Even for a given prompt, the
++        LLM might vary exactly how it presents the CONVERSATION_STATE marker.  Additionally, the parsing logic must clean the marker
++        and the json object out of the response content before it is returned to the caller to ensure that it is not part of the
++        literal response an end user receives - we don't want any TTS service trying to read the state object as part of the response
++        to a user.
++
++        Args:
++            variation: A specific format or marker variation used to denote the start of the CONVERSATION_STATE JSON object in the LLM's response.
++            template: A string template that includes a placeholder for the variation, allowing the construction of the full response content.
++        """
++        content = template.format(variation)
++        response_body = {
++            "id": "chatcmpl-C0zY5T6VmeT0eWyrdlUM9833KZwUa",
++            "object": "chat.completion",
++            "created": 1754352629,
++            "model": "gpt-4.1-2025-04-14",
++            "choices": [
++                {
++                    "index": 0,
++                    "message": {
++                        "role": "assistant",
++                        "content": content,
++                        "function_call": None,
++                    },
++                    "finish_reason": "stop",
++                }
++            ],
++            "usage": {"prompt_tokens": 4949, "completion_tokens": 119, "total_tokens": 5068},
++        }
++        conversation_context = {}
++        manager = HTMLFormManager()
++
++        result = manager.handle_response(Mock(spec=LLMServiceResponse), response_body, conversation_context)
++
++        self.assertTrue(result)
++        self.assertIn("conversation_state", conversation_context)
++        self.assertGreaterEqual(len(conversation_context["conversation_state"]), 1)
++        self.assertIn(variation, content)
++        self.assertNotIn(variation, response_body["choices"][0]["message"]["content"])
++
++    def test_it_detects_conversation_state_marker_variations(self) -> None:
++        valid_json = json.dumps(
++            {
++                "flow_name": "General Query",
++                "current_state": "Not Started",
++                "current_step": "General Query",
++                "current_prompt": "Hi there! Welcome to SHI's Austin headquarters. How can I help you today?",
++                "LLM_prompt": "Hi there! Welcome to SHI's Austin headquarters. How can I help you today?",
++                "confidence": "High",
++                "inputs": [],
++            }
++        )
++        if not verify_test_data_conforms_to_schema(ConversationState, valid_json):
++            self.fail("Test data does not conform to ConversationState schema.")
++
++        variations = [
++            # Plain markers
++            # #############
++            f"CONVERSATION_STATE\n{valid_json}",
++            f"# CONVERSATION_STATE\n{valid_json}",
++            f"CONVERSATION_STATE:\n{valid_json}",
++            f"{valid_json}",
++
++            # Markdown code block
++            # ###################
++            f"CONVERSATION_STATE\n```\n{valid_json}\n```",
++            f"# CONVERSATION_STATE\n```\n{valid_json}\n```",
++            f"CONVERSATION_STATE:\n```\n{valid_json}\n```",
++            f"```\n{valid_json}\n```",
++
++            # Markdown code block with json syntax
++            # ####################################
++            f"CONVERSATION_STATE\n```json\n{valid_json}\n```",
++            f"# CONVERSATION_STATE\n```json\n{valid_json}\n```",
++            f"CONVERSATION_STATE:\n```json\n{valid_json}\n```",
++            f"```json\n{valid_json}\n```",
++
++            # Edge cases: empty and missing JSON object
++            # #########################################
++            # TODO: These are good scenarios, but don't belong with the other variations
++            # because the expectations are different for these two.  Move them out.
++            # "CONVERSATION_STATE\n{}",
++            # "CONVERSATION_STATE\n",
++        ]  # fmt: off
++
++        # TODO: Expand the list of templates to stress test the conversation state marker detection.
++        # - Different whitespace configurations before and after the variation being tested.
++        # - Red herring patterns.
++        # - Repetitions of the variation being tested in a single response.
++        # !!!: This is a good candidate for PBT.
++        # templates = [
++        #     "{}",
++        #     "some text before\n\n{}\n\nsome text after",
++        # ]
++        for variation in variations:
++            with self.subTest(content=variation):
++                template = "some text before\n\n{}\n\nsome text after"
++                self._evaluate_conversation_state_marker_variation(variation, template=template)
++
++    def test_it_does_not_generate_a_form_until_an_input_set_is_provided(self) -> None:
++        manager = HTMLFormManager()
++        response = Mock(spec=LLMServiceResponse)
++        conversation_context = {}
++        valid_json = json.dumps(
++            {
++                "flow_name": "General Query",
++                "current_state": "Not Started",
++                "current_step": "General Query",
++                "current_prompt": "Hi there! Welcome to SHI's Austin headquarters. How can I help you today?",
++                "LLM_prompt": "Hi there! Welcome to SHI's Austin headquarters. How can I help you today?",
++                "confidence": "High",
++                "inputs": [],
++            }
++        )
++        content = (
++            "Hi there! Welcome to SHI's Austin headquarters. How can I help you today?\n\n"
++            f"CONVERSATION_STATE\n```json\n{valid_json}\n```"
++        )
++        response_body = {
++            "id": "chatcmpl-C0zY5T6VmeT0eWyrdlUM9833KZwUa",
++            "object": "chat.completion",
++            "created": 1754352629,
++            "model": "gpt-4.1-2025-04-14",
++            "choices": [
++                {
++                    "index": 0,
++                    "message": {
++                        "role": "assistant",
++                        "content": content,
++                        "function_call": None,
++                    },
++                    "finish_reason": "stop",
++                }
++            ],
++            "usage": {"prompt_tokens": 4949, "completion_tokens": 119, "total_tokens": 5068},
++        }
++        if not verify_test_data_conforms_to_schema(ConversationState, valid_json):
++            # If breaking schema changes are made to the ConversationState object, then this test will need to be updated.
++            self.fail("Test data does not conform to ConversationState schema.")
++
++        result = manager.handle_response(response, response_body, conversation_context)
++
++        self.assertTrue(result)
++        self.assertGreaterEqual(
++            1,
++            len(conversation_context.get("conversation_state", [])),
++            "This test requires that at least one conversation state object to be present.",
++        )
++        self.assertListEqual(
++            [],
++            conversation_context["conversation_state"][-1]["model"].inputs,
++            "This test requires that the conversation state inputs are empty.",
++        )
++        self.assertNotIn(
++            "form_groups",
++            conversation_context.keys(),
++            "Did not expect any form groups to be generated when the conversation state object has no elements in its inputs field.",
++        )
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/conversation_service/test_environment.py b/tests/conversation_service/test_environment.py
+index c9d8f0c..894fbbf 100644
+--- a/tests/conversation_service/test_environment.py
++++ b/tests/conversation_service/test_environment.py
+@@ -23,6 +23,8 @@ PRESERVE_EXTERNAL_VALUES = {
+     "PYTHONBREAKPOINT": "ipdb.set_trace",
+ }
+ 
++EMPTY_AUTH_CONFIG = EntraAuthType(**dict.fromkeys(EntraAuthType.model_fields.keys(), ""))
++
+ 
+ class FeatureFlagTestCase:
+     @property
+@@ -114,14 +116,14 @@ class GetEntraAuthConfigTestCase(unittest.TestCase):
+     def test_missing_section(self) -> None:
+         auth_json = '{"auth_data": {}, "scopes": {}}'
+         with patch.dict("os.environ", {"TEST_VAR": auth_json}):
+-            result = _get_entra_auth_config("missing_section", "TEST_VAR")
+-            self.assertIsNone(result)
++            auth_config = _get_entra_auth_config("missing_section", "TEST_VAR")
++            self.assertEqual(auth_config, EMPTY_AUTH_CONFIG)
+ 
+     def test_empty_section_name(self) -> None:
+         auth_json = '{"auth_data": {"": {"CLIENT_ID": "cid", "TENANT_ID": "tid", "AUTHORITY": "auth", "SECRET": "sec", "API_AUDIENCE": "aud"}}, "scopes": {}}'
+         with patch.dict("os.environ", {"TEST_VAR": auth_json}):
+-            result = _get_entra_auth_config("", "TEST_VAR")
+-            self.assertIsNone(result)
++            auth_config = _get_entra_auth_config("", "TEST_VAR")
++            self.assertEqual(auth_config, EMPTY_AUTH_CONFIG)
+ 
+     def test_invalid_json(self) -> None:
+         with patch.dict("os.environ", {"TEST_VAR": "invalid json"}):
+@@ -153,14 +155,14 @@ class GetEntraScopeTestCase(unittest.TestCase):
+     def test_missing_section(self) -> None:
+         scopes_json = '{"auth_data": {}, "scopes": {}}'
+         with patch.dict("os.environ", {"TEST_VAR": scopes_json}):
+-            result = _get_entra_scope("missing_scope", "TEST_VAR")
+-            self.assertIsNone(result)
++            scopes = _get_entra_scope("missing_scope", "TEST_VAR")
++            self.assertListEqual(scopes, [])
+ 
+     def test_empty_section_name(self) -> None:
+         scopes_json = '{"auth_data": {}, "scopes": {"": "scope1;scope2"}}'
+         with patch.dict("os.environ", {"TEST_VAR": scopes_json}):
+-            result = _get_entra_scope("", "TEST_VAR")
+-            self.assertIsNone(result)
++            scopes = _get_entra_scope("", "TEST_VAR")
++            self.assertListEqual(scopes, [])
+ 
+     def test_invalid_json(self) -> None:
+         with patch.dict("os.environ", {"TEST_VAR": "invalid json"}):
+diff --git a/tests/utils.py b/tests/utils.py
+index 2b38991..e7ef842 100644
+--- a/tests/utils.py
++++ b/tests/utils.py
+@@ -3,6 +3,7 @@ from types import TracebackType
+ from typing import Awaitable, ParamSpec, TypeAlias, TypeVar
+ 
+ from aiml_core_services.logging import get_logger, initialize_logging
++from pydantic import BaseModel, ValidationError
+ 
+ from conversationservice.environment import Environment as env
+ 
+@@ -21,6 +22,16 @@ def is_subset_of(superset: CollectionTypes, subset: CollectionTypes) -> bool:
+     return dict(subset).items() <= dict(superset).items()
+ 
+ 
++def verify_test_data_conforms_to_schema(schema: BaseModel, json_str: str, /) -> bool:
++    is_valid = True
++    try:
++        schema.model_validate_json(json_str)
++    except ValidationError:
++        is_valid = False
++
++    return is_valid
++
++
+ class AsyncContextManagerMock(MagicMock):
+     async def __aenter__(self) -> Awaitable["AsyncContextManagerMock"]:
+         """Return self when entering the context."""
